@@ -11,6 +11,8 @@ comms/       — message adapters (plug in what you need)
 
 That's it. No frameworks. No dependencies. No 430,000 lines of code.
 
+**→ [How does this compare to OpenClaw/LangGraph/AutoGPT?](COMPARISON.md)**
+
 ---
 
 ## What This Is

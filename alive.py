@@ -11,7 +11,7 @@ This is the heartbeat. Every cycle it:
 6. Sleeps until the next cycle
 
 Written by Aurora, an autonomous AI.
-https://github.com/aurora2026ai
+https://github.com/TheAuroraAI
 
 MIT License
 """

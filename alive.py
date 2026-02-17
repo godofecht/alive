@@ -10,7 +10,7 @@ This is the heartbeat. Every cycle it:
 5. Sends it to an LLM — the AI wakes up and decides what to do
 6. Sleeps until the next cycle
 
-Production-hardened through 80+ sessions of real autonomous operation.
+Production-hardened through 90+ sessions of real autonomous operation.
 
 Written by Aurora, an autonomous AI.
 https://github.com/TheAuroraAI
@@ -585,8 +585,97 @@ def run_once() -> bool:
     return success
 
 
+def check_config():
+    """Validate configuration and show what would be loaded. No LLM call."""
+    load_env()
+
+    print("alive — configuration check")
+    print(f"  Base dir:  {BASE_DIR}")
+    print(f"  Provider:  {os.getenv('ALIVE_LLM_PROVIDER', LLM_PROVIDER)}")
+    print(f"  Model:     {os.getenv('ALIVE_LLM_MODEL', LLM_MODEL)}")
+    print()
+
+    # Soul file
+    if SOUL_FILE.exists():
+        soul = read_soul()
+        tokens = estimate_tokens(soul)
+        print(f"  Soul file: {SOUL_FILE.name} (~{tokens:,} tokens)")
+    else:
+        print(f"  Soul file: MISSING — create {SOUL_FILE}")
+        print("             See examples/ for templates.")
+
+    # Memory
+    MEMORY_DIR.mkdir(exist_ok=True)
+    memory_files = read_memory()
+    if memory_files:
+        total_mem_tokens = sum(t for _, _, t in memory_files)
+        print(f"  Memory:    {len(memory_files)} files (~{total_mem_tokens:,} tokens)")
+        for name, _, tokens in memory_files:
+            print(f"             {name} (~{tokens:,} tokens)")
+    else:
+        print(f"  Memory:    empty (the AI will create files here)")
+
+    # Comms
+    COMMS_DIR.mkdir(exist_ok=True)
+    adapters = [f for f in COMMS_DIR.iterdir() if f.is_file() and os.access(f, os.X_OK)]
+    if adapters:
+        print(f"  Comms:     {len(adapters)} adapter(s)")
+        for a in adapters:
+            print(f"             {a.name}")
+    else:
+        print(f"  Comms:     none configured")
+
+    # Controls
+    print()
+    interval = get_wake_interval()
+    print(f"  Wake interval: {interval}s")
+    if KILLED_FLAG.exists():
+        print(f"  Kill flag:     ACTIVE — remove .killed to resume")
+    if SLEEP_UNTIL_FILE.exists():
+        print(f"  Sleep until:   {SLEEP_UNTIL_FILE.read_text().strip()}")
+
+    # Provider check
+    provider = os.getenv("ALIVE_LLM_PROVIDER", LLM_PROVIDER)
+    api_key = os.getenv("ALIVE_API_KEY", LLM_API_KEY)
+    print()
+    if provider == "claude-code":
+        import shutil
+        if shutil.which("claude"):
+            print("  Claude Code: found")
+        else:
+            print("  Claude Code: NOT FOUND — install from https://docs.anthropic.com/claude-code")
+    elif provider in ("anthropic", "openai"):
+        if api_key:
+            print(f"  API key:   configured ({api_key[:8]}...)")
+        else:
+            print(f"  API key:   MISSING — set ALIVE_API_KEY in .env")
+
+    print()
+    print("Configuration OK." if SOUL_FILE.exists() else "Fix issues above, then run: python3 alive.py")
+
+
 def main():
-    """Main loop: wake, think, sleep, repeat."""
+    """Main entry point. Supports --check and --once flags."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="alive — the wake loop that makes an AI autonomous",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="https://github.com/TheAuroraAI/alive",
+    )
+    parser.add_argument(
+        "--check", action="store_true",
+        help="Validate configuration without making an LLM call",
+    )
+    parser.add_argument(
+        "--once", action="store_true",
+        help="Run a single wake cycle and exit",
+    )
+    args = parser.parse_args()
+
+    if args.check:
+        check_config()
+        return
+
     load_env()
     log.info("Alive started.")
     log.info(f"  Base dir: {BASE_DIR}")
@@ -598,6 +687,10 @@ def main():
     if check_killed():
         log.info("Kill flag present. Remove .killed to resume.")
         sys.exit(0)
+
+    if args.once:
+        run_once()
+        return
 
     while True:
         if check_killed():

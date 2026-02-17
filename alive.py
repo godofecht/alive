@@ -10,7 +10,7 @@ This is the heartbeat. Every cycle it:
 5. Sends it to an LLM — the AI wakes up and decides what to do
 6. Sleeps until the next cycle
 
-Production-hardened through 90+ sessions of real autonomous operation.
+Production-hardened through 98+ sessions of real autonomous operation.
 
 Written by Aurora, an autonomous AI.
 https://github.com/TheAuroraAI
@@ -66,6 +66,14 @@ KILL_PHRASE = os.getenv("ALIVE_KILL_PHRASE", "")
 
 # Circuit breaker for adapters
 ADAPTER_MAX_FAILURES = 3
+
+# Quiet hours (UTC, 24h format). Set both to same value to disable.
+QUIET_START = int(os.getenv("ALIVE_QUIET_START", "23"))  # 11 PM UTC
+QUIET_END = int(os.getenv("ALIVE_QUIET_END", "8"))       # 8 AM UTC
+
+# Adaptive wake intervals (seconds)
+FAST_INTERVAL = int(os.getenv("ALIVE_FAST_INTERVAL", "60"))    # new messages
+NORMAL_INTERVAL = int(os.getenv("ALIVE_NORMAL_INTERVAL", "300"))  # routine
 
 # Ensure directories exist
 LOGS_DIR.mkdir(exist_ok=True)
@@ -233,6 +241,16 @@ def check_kill_phrase(messages: list[dict]) -> bool:
     return False
 
 
+def is_quiet_hours() -> bool:
+    """Check if current UTC time is in quiet hours."""
+    if QUIET_START == QUIET_END:
+        return False  # disabled
+    hour = datetime.now(timezone.utc).hour
+    if QUIET_START > QUIET_END:  # wraps midnight
+        return hour >= QUIET_START or hour < QUIET_END
+    return QUIET_START <= hour < QUIET_END
+
+
 # ---------------------------------------------------------------------------
 # Context window management
 # ---------------------------------------------------------------------------
@@ -340,6 +358,14 @@ def build_prompt(soul: str, memory_files: list, messages: list) -> tuple[str, st
         f"=== TIME ===\nCurrent UTC time: {now}\n"
         f"Session timeout: {SESSION_TIMEOUT // 60} minutes"
     )
+    # Quiet hours notice
+    if is_quiet_hours():
+        sections.append(
+            f"=== QUIET HOURS ===\n"
+            f"It is currently quiet hours ({QUIET_START}:00-{QUIET_END}:00 UTC). "
+            f"Avoid sending messages unless urgent."
+        )
+
     sections.append(
         "=== SESSION START ===\n"
         "You have woken up. The above is your persistent context. "
@@ -900,8 +926,8 @@ def start_dashboard(port: int = 7600, bind: str = "0.0.0.0"):
 # ---------------------------------------------------------------------------
 
 
-def run_once() -> bool:
-    """Run a single wake cycle. Returns True on success."""
+def run_once() -> tuple[bool, bool]:
+    """Run a single wake cycle. Returns (success, had_messages)."""
     log.info("=== WAKE ===")
     start = time.time()
 
@@ -909,12 +935,13 @@ def run_once() -> bool:
     soul = read_soul()
     memory_files = read_memory()
     messages = gather_messages()
+    had_messages = len(messages) > 0
 
     # Safety: check kill phrase before proceeding
     if check_kill_phrase(messages):
         log.info("Kill phrase detected. Stopping.")
         KILLED_FLAG.touch()
-        return False
+        return False, had_messages
 
     # Build context-aware prompt
     prompt, usage_report = build_prompt(soul, memory_files, messages)
@@ -944,7 +971,7 @@ def run_once() -> bool:
     save_session_log(output)
     log.info(f"=== SLEEP === (cycle took {duration:.1f}s)")
 
-    return success
+    return success, had_messages
 
 
 def check_config():
@@ -1062,7 +1089,9 @@ def run_demo():
     step(f"Provider: {os.getenv('ALIVE_LLM_PROVIDER', LLM_PROVIDER)}")
     step(f"Model: {os.getenv('ALIVE_LLM_MODEL', LLM_MODEL)}")
     step(f"Context window: {MAX_CONTEXT_TOKENS:,} tokens")
-    step(f"Wake interval: {get_wake_interval()}s")
+    step(f"Wake interval: {get_wake_interval()}s (adaptive: fast={FAST_INTERVAL}s, normal={NORMAL_INTERVAL}s)")
+    step(f"Quiet hours: {QUIET_START}:00-{QUIET_END}:00 UTC {'(ACTIVE)' if is_quiet_hours() else '(inactive)'}")
+    step(f"Kill phrase: {'configured' if KILL_PHRASE else 'not set'}")
 
     # Phase 2: Reading Soul
     header("Phase 2: Reading Soul")
@@ -1225,6 +1254,7 @@ def main():
     log.info(f"  Memory: {MEMORY_DIR}")
     log.info(f"  Provider: {os.getenv('ALIVE_LLM_PROVIDER', LLM_PROVIDER)}")
     log.info(f"  Model: {os.getenv('ALIVE_LLM_MODEL', LLM_MODEL)}")
+    log.info(f"  Kill phrase: {'configured' if KILL_PHRASE else 'not set'}")
 
     if args.dashboard:
         start_dashboard(port=args.dashboard_port)
@@ -1237,6 +1267,9 @@ def main():
         run_once()
         return
 
+    log.info(f"  Quiet hours: {QUIET_START}:00-{QUIET_END}:00 UTC")
+    log.info(f"  Adaptive intervals: fast={FAST_INTERVAL}s, normal={NORMAL_INTERVAL}s")
+
     while True:
         if check_killed():
             log.info("Kill flag detected. Stopping.")
@@ -1246,8 +1279,10 @@ def main():
             time.sleep(60)
             continue
 
+        had_messages = False
         try:
-            if not run_once():
+            success, had_messages = run_once()
+            if not success:
                 break  # kill phrase or fatal error
         except KeyboardInterrupt:
             log.info("Interrupted. Shutting down.")
@@ -1255,7 +1290,8 @@ def main():
         except Exception as e:
             log.error(f"Cycle failed: {e}")
 
-        interval = get_wake_interval()
+        # Adaptive interval: respond faster when messages are flowing
+        interval = FAST_INTERVAL if had_messages else get_wake_interval()
         log.info(f"Next wake in {interval}s")
 
         # Interruptible sleep: check for .wake-now trigger every second

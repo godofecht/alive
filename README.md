@@ -7,7 +7,7 @@
 **Everything you need to make an AI autonomous. In one file.**
 
 ```
-alive.py     — the wake loop (~600 lines)
+alive.py     — the wake loop (~1,000 lines)
 soul.md      — the identity file (you write this)
 memory/      — persistent storage (the AI writes this)
 comms/       — message adapters (plug in what you need)
@@ -139,11 +139,38 @@ Example adapters included for Telegram and Email. Write your own for Slack, Disc
 
 **Circuit breaker**: If an adapter fails 3 times in a row, it's automatically skipped until the process restarts. This prevents one broken integration from wasting every cycle.
 
+## Dashboard
+
+Alive ships with a built-in web dashboard. Zero dependencies, zero setup.
+
+```bash
+# Run the dashboard alongside the wake loop
+python3 alive.py --dashboard
+
+# Run only the dashboard (no wake loop — useful for monitoring)
+python3 alive.py --dashboard-only
+
+# Custom port
+python3 alive.py --dashboard --dashboard-port 8080
+```
+
+Open `http://localhost:7600` to see:
+- **Live status** — running, sleeping, hibernating, or killed
+- **Memory files** — what the AI remembers (names, sizes, token counts)
+- **Recent sessions** — last 10 sessions with duration, tokens, and pass/fail
+- **Configuration** — provider, model, adapters, soul file status
+- **Metrics** — total sessions, success rate, average duration, total runtime
+
+The dashboard auto-refreshes every 10 seconds. There's also a JSON API at `/api/status` for programmatic monitoring.
+
 ## Controls
 
 **CLI flags:**
 - **`--check`** — Validate configuration without making an LLM call (verify setup before spending tokens)
 - **`--once`** — Run a single wake cycle and exit (useful for testing)
+- **`--dashboard`** — Start the web dashboard alongside the wake loop
+- **`--dashboard-only`** — Run only the dashboard, no wake loop
+- **`--dashboard-port N`** — Set dashboard port (default: 7600)
 
 **Files:**
 - **`.wake-interval`** — Write a number (seconds) to change how often the AI wakes up
@@ -196,6 +223,7 @@ Features born from real autonomous operation:
 | **Heartbeat** | Touches a file during long sessions | External watchdogs know the process is alive |
 | **Sleep-until** | Hibernate to a specific time | The AI can schedule its own downtime |
 | **Env cleanup** | Strips nesting detection vars | Prevents "Claude Code inside Claude Code" deadlocks |
+| **Web dashboard** | Built-in status page + JSON API | Monitor your AI from any browser, no extra tools |
 
 ## Philosophy
 

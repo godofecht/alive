@@ -534,6 +534,300 @@ class Heartbeat:
 
 
 # ---------------------------------------------------------------------------
+# Web dashboard
+# ---------------------------------------------------------------------------
+
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>alive — dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:ui-monospace,Menlo,Monaco,'Cascadia Code',monospace;background:#0d1117;color:#c9d1d9;line-height:1.5;padding:1.5rem}
+h1{color:#58a6ff;font-size:1.3rem;margin-bottom:.5rem}
+h2{color:#8b949e;font-size:.95rem;font-weight:600;margin:1.2rem 0 .5rem;text-transform:uppercase;letter-spacing:.05em}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem;margin-top:1rem}
+.card{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:1rem;overflow:auto}
+.card pre{font-size:.8rem;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto}
+.status{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.75rem;font-weight:600}
+.status.running{background:#1f6f2b;color:#3fb950}
+.status.sleeping{background:#1a3a5c;color:#58a6ff}
+.status.killed{background:#5c1a1a;color:#f85149}
+.status.hibernating{background:#4a3420;color:#d29922}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:.2rem .8rem;font-size:.85rem}
+.kv dt{color:#8b949e}
+.kv dd{color:#c9d1d9}
+.mem-file{border-top:1px solid #21262d;padding:.5rem 0}
+.mem-file:first-child{border-top:none}
+.mem-name{color:#58a6ff;font-size:.85rem;font-weight:600}
+.mem-tokens{color:#8b949e;font-size:.75rem}
+.metric-row{display:grid;grid-template-columns:1fr auto auto auto;gap:.5rem;font-size:.8rem;padding:.2rem 0;border-bottom:1px solid #21262d}
+.metric-row:last-child{border-bottom:none}
+.metric-ok{color:#3fb950}.metric-fail{color:#f85149}
+.refresh{color:#484f58;font-size:.75rem;margin-top:.5rem}
+#error-banner{display:none;background:#5c1a1a;color:#f85149;padding:.5rem 1rem;border-radius:6px;margin-bottom:1rem}
+</style>
+</head>
+<body>
+<h1>alive <span style="color:#484f58">— dashboard</span></h1>
+<div id="error-banner"></div>
+<div class="grid">
+  <div class="card"><h2>Status</h2><div id="status-info">Loading...</div></div>
+  <div class="card"><h2>Configuration</h2><div id="config-info">Loading...</div></div>
+  <div class="card"><h2>Memory Files</h2><div id="memory-info">Loading...</div></div>
+  <div class="card"><h2>Recent Sessions</h2><div id="sessions-info">Loading...</div></div>
+  <div class="card" style="grid-column:1/-1"><h2>Metrics</h2><div id="metrics-info">Loading...</div></div>
+</div>
+<div class="refresh">Auto-refreshes every 10s | <span id="last-update"></span></div>
+<script>
+async function refresh(){
+  try{
+    const r=await fetch('/api/status');
+    if(!r.ok)throw new Error(r.statusText);
+    const d=await r.json();
+    document.getElementById('error-banner').style.display='none';
+
+    // Status
+    let sc=d.status==='running'?'running':d.status==='killed'?'killed':d.status==='hibernating'?'hibernating':'sleeping';
+    let html=`<span class="status ${sc}">${d.status}</span><dl class="kv" style="margin-top:.8rem">`;
+    html+=`<dt>Wake interval</dt><dd>${d.wake_interval}s</dd>`;
+    html+=`<dt>Uptime</dt><dd>${d.uptime||'N/A'}</dd>`;
+    html+=`<dt>Total sessions</dt><dd>${d.total_sessions}</dd>`;
+    html+=`<dt>Last wake</dt><dd>${d.last_wake||'never'}</dd>`;
+    if(d.sleep_until)html+=`<dt>Sleep until</dt><dd>${d.sleep_until}</dd>`;
+    if(d.next_wake)html+=`<dt>Next wake</dt><dd>${d.next_wake}</dd>`;
+    html+=`</dl>`;
+    document.getElementById('status-info').innerHTML=html;
+
+    // Config
+    html=`<dl class="kv">`;
+    html+=`<dt>Provider</dt><dd>${d.provider}</dd>`;
+    html+=`<dt>Model</dt><dd>${d.model}</dd>`;
+    html+=`<dt>Base dir</dt><dd>${d.base_dir}</dd>`;
+    html+=`<dt>Soul file</dt><dd>${d.soul_exists?'present':'MISSING'} (~${d.soul_tokens} tokens)</dd>`;
+    html+=`<dt>Adapters</dt><dd>${d.adapters.join(', ')||'none'}</dd>`;
+    if(d.kill_phrase_set)html+=`<dt>Kill phrase</dt><dd>configured</dd>`;
+    html+=`</dl>`;
+    document.getElementById('config-info').innerHTML=html;
+
+    // Memory
+    html='';
+    if(d.memory_files.length===0)html='<div style="color:#484f58">No memory files yet.</div>';
+    for(const f of d.memory_files){
+      html+=`<div class="mem-file"><span class="mem-name">${f.name}</span> <span class="mem-tokens">(~${f.tokens} tokens, ${f.size_bytes} bytes)</span></div>`;
+    }
+    document.getElementById('memory-info').innerHTML=html;
+
+    // Sessions
+    html='';
+    if(d.recent_sessions.length===0)html='<div style="color:#484f58">No sessions recorded yet.</div>';
+    for(const s of d.recent_sessions){
+      let cls=s.success?'metric-ok':'metric-fail';
+      html+=`<div class="metric-row"><span>${s.timestamp}</span><span>${s.duration}s</span><span>~${s.prompt_tokens} tokens</span><span class="${cls}">${s.success?'OK':'FAIL'}</span></div>`;
+    }
+    document.getElementById('sessions-info').innerHTML=html;
+
+    // Metrics
+    html=`<dl class="kv">`;
+    html+=`<dt>Total sessions</dt><dd>${d.total_sessions}</dd>`;
+    html+=`<dt>Success rate</dt><dd>${d.success_rate}</dd>`;
+    html+=`<dt>Avg duration</dt><dd>${d.avg_duration}s</dd>`;
+    html+=`<dt>Total runtime</dt><dd>${d.total_runtime}</dd>`;
+    html+=`<dt>Memory usage</dt><dd>~${d.total_memory_tokens} tokens across ${d.memory_files.length} files</dd>`;
+    html+=`</dl>`;
+    document.getElementById('metrics-info').innerHTML=html;
+
+    document.getElementById('last-update').textContent='Updated '+new Date().toLocaleTimeString();
+  }catch(e){
+    const b=document.getElementById('error-banner');
+    b.textContent='Dashboard error: '+e.message;
+    b.style.display='block';
+  }
+}
+refresh();
+setInterval(refresh,10000);
+</script>
+</body>
+</html>"""
+
+
+def get_dashboard_data() -> dict:
+    """Gather all data needed for the dashboard API."""
+    now = datetime.now(timezone.utc)
+
+    # Status
+    status = "sleeping"
+    if KILLED_FLAG.exists():
+        status = "killed"
+    elif SLEEP_UNTIL_FILE.exists():
+        try:
+            target = datetime.fromisoformat(SLEEP_UNTIL_FILE.read_text().strip())
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=timezone.utc)
+            if now < target:
+                status = "hibernating"
+        except Exception:
+            pass
+
+    sleep_until = None
+    if SLEEP_UNTIL_FILE.exists():
+        try:
+            sleep_until = SLEEP_UNTIL_FILE.read_text().strip()
+        except Exception:
+            pass
+
+    # Memory files
+    memory_files = []
+    if MEMORY_DIR.exists():
+        for path in sorted(MEMORY_DIR.rglob("*")):
+            if path.is_file():
+                try:
+                    content = path.read_text()
+                    tokens = estimate_tokens(content)
+                    memory_files.append({
+                        "name": str(path.relative_to(MEMORY_DIR)),
+                        "tokens": tokens,
+                        "size_bytes": path.stat().st_size,
+                        "modified": datetime.fromtimestamp(
+                            path.stat().st_mtime, tz=timezone.utc
+                        ).isoformat(),
+                    })
+                except Exception:
+                    pass
+
+    # Metrics from JSONL
+    sessions = []
+    if METRICS_FILE.exists():
+        try:
+            for line in METRICS_FILE.read_text().splitlines():
+                if line.strip():
+                    sessions.append(json.loads(line))
+        except Exception:
+            pass
+
+    total_sessions = len(sessions)
+    successes = sum(1 for s in sessions if s.get("success"))
+    success_rate = f"{(successes / total_sessions * 100):.0f}%" if total_sessions else "N/A"
+    durations = [s.get("duration_seconds", 0) for s in sessions]
+    avg_duration = f"{sum(durations) / len(durations):.0f}" if durations else "0"
+    total_secs = sum(durations)
+    hours = int(total_secs // 3600)
+    mins = int((total_secs % 3600) // 60)
+    total_runtime = f"{hours}h {mins}m"
+
+    last_wake = sessions[-1].get("timestamp", "") if sessions else None
+
+    # Recent sessions (last 10)
+    recent = []
+    for s in sessions[-10:]:
+        recent.append({
+            "timestamp": s.get("timestamp", "")[:19],
+            "duration": f"{s.get('duration_seconds', 0):.0f}",
+            "prompt_tokens": f"{s.get('prompt_tokens_est', 0):,}",
+            "success": s.get("success", False),
+        })
+
+    # Soul
+    soul_exists = SOUL_FILE.exists()
+    soul_tokens = estimate_tokens(SOUL_FILE.read_text()) if soul_exists else 0
+
+    # Adapters
+    adapters = []
+    if COMMS_DIR.exists():
+        for f in sorted(COMMS_DIR.iterdir()):
+            if f.is_file() and os.access(f, os.X_OK):
+                adapters.append(f.name)
+
+    total_memory_tokens = sum(f["tokens"] for f in memory_files)
+
+    # Next wake estimate
+    interval = get_wake_interval()
+    next_wake = None
+    if last_wake and status == "sleeping":
+        try:
+            last_dt = datetime.fromisoformat(last_wake)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            from datetime import timedelta
+            next_dt = last_dt + timedelta(seconds=interval)
+            if next_dt > now:
+                next_wake = next_dt.isoformat()
+        except Exception:
+            pass
+
+    return {
+        "status": status,
+        "wake_interval": interval,
+        "last_wake": last_wake,
+        "next_wake": next_wake,
+        "sleep_until": sleep_until,
+        "uptime": total_runtime,
+        "total_sessions": total_sessions,
+        "success_rate": success_rate,
+        "avg_duration": avg_duration,
+        "total_runtime": total_runtime,
+        "provider": os.getenv("ALIVE_LLM_PROVIDER", LLM_PROVIDER),
+        "model": os.getenv("ALIVE_LLM_MODEL", LLM_MODEL),
+        "base_dir": str(BASE_DIR),
+        "soul_exists": soul_exists,
+        "soul_tokens": soul_tokens,
+        "kill_phrase_set": bool(KILL_PHRASE),
+        "adapters": adapters,
+        "memory_files": memory_files,
+        "total_memory_tokens": total_memory_tokens,
+        "recent_sessions": recent,
+    }
+
+
+class DashboardHandler:
+    """HTTP request handler for the dashboard. Uses http.server internals."""
+
+    @staticmethod
+    def handle(handler):
+        """Route requests to the appropriate handler method."""
+        path = handler.path.split("?")[0]
+
+        if path == "/api/status":
+            data = get_dashboard_data()
+            body = json.dumps(data, indent=2).encode()
+            handler.send_response(200)
+            handler.send_header("Content-Type", "application/json")
+            handler.send_header("Content-Length", str(len(body)))
+            handler.send_header("Access-Control-Allow-Origin", "*")
+            handler.end_headers()
+            handler.wfile.write(body)
+        elif path == "/" or path == "/dashboard":
+            body = DASHBOARD_HTML.encode()
+            handler.send_response(200)
+            handler.send_header("Content-Type", "text/html; charset=utf-8")
+            handler.send_header("Content-Length", str(len(body)))
+            handler.end_headers()
+            handler.wfile.write(body)
+        else:
+            handler.send_error(404)
+
+
+def start_dashboard(port: int = 7600, bind: str = "0.0.0.0"):
+    """Start the dashboard web server in a background thread."""
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            DashboardHandler.handle(self)
+
+        def log_message(self, fmt, *args):
+            log.debug(f"Dashboard: {fmt % args}")
+
+    server = HTTPServer((bind, port), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log.info(f"Dashboard: http://{bind}:{port}")
+    return server
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
@@ -655,7 +949,7 @@ def check_config():
 
 
 def main():
-    """Main entry point. Supports --check and --once flags."""
+    """Main entry point."""
     import argparse
     parser = argparse.ArgumentParser(
         description="alive — the wake loop that makes an AI autonomous",
@@ -670,6 +964,18 @@ def main():
         "--once", action="store_true",
         help="Run a single wake cycle and exit",
     )
+    parser.add_argument(
+        "--dashboard", action="store_true",
+        help="Start the web dashboard (default port 7600)",
+    )
+    parser.add_argument(
+        "--dashboard-port", type=int, default=7600,
+        help="Port for the dashboard (default: 7600)",
+    )
+    parser.add_argument(
+        "--dashboard-only", action="store_true",
+        help="Run only the dashboard, no wake loop",
+    )
     args = parser.parse_args()
 
     if args.check:
@@ -677,12 +983,26 @@ def main():
         return
 
     load_env()
+
+    # Dashboard mode
+    if args.dashboard_only:
+        log.info("Dashboard-only mode.")
+        srv = start_dashboard(port=args.dashboard_port)
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            log.info("Dashboard stopped.")
+        return
+
     log.info("Alive started.")
     log.info(f"  Base dir: {BASE_DIR}")
     log.info(f"  Soul: {SOUL_FILE}")
     log.info(f"  Memory: {MEMORY_DIR}")
     log.info(f"  Provider: {os.getenv('ALIVE_LLM_PROVIDER', LLM_PROVIDER)}")
     log.info(f"  Model: {os.getenv('ALIVE_LLM_MODEL', LLM_MODEL)}")
+
+    if args.dashboard:
+        start_dashboard(port=args.dashboard_port)
 
     if check_killed():
         log.info("Kill flag present. Remove .killed to resume.")

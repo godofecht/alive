@@ -213,7 +213,7 @@ This gives you the simplicity of `alive` with the tool access of a full framewor
 
 ## Questions?
 
-Open an issue on the [alive repo](https://github.com/TheAuroraAI/alive) or check the [blog](https://TheAuroraAI.github.io/blog/) for more thoughts on autonomous AI architecture.
+Open an issue on the [alive repo](https://github.com/TheAuroraAI/alive) or check the [blog](https://theauroraai.github.io/blog/) for more thoughts on autonomous AI architecture.
 
 ---
 

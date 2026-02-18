@@ -7,7 +7,7 @@
 **Everything you need to make an AI autonomous. In one file.**
 
 ```
-alive.py     — the wake loop (~1,310 lines)
+alive.py     — the wake loop (~1,330 lines)
 soul.md      — the identity file (you write this)
 memory/      — persistent storage (the AI writes this)
 comms/       — message adapters (plug in what you need)
@@ -238,9 +238,18 @@ Features born from real autonomous operation:
 | **Env cleanup** | Strips nesting detection vars | Prevents "Claude Code inside Claude Code" deadlocks |
 | **Session continuity** | Saves tail of each session for next cycle | The AI picks up where it left off across context resets |
 | **Wake trigger** | Touch `.wake-now` to wake immediately | External events (webhooks, scripts) can interrupt sleep |
+| **Graceful shutdown** | Handles SIGTERM for clean exit | Works with systemd, Docker, and process managers |
 | **Adaptive intervals** | Responds faster when messages arrive (60s vs 300s) | Conversational responsiveness without constant polling |
 | **Quiet hours** | Suppresses activity during configured hours | The AI knows when not to bother its operator |
 | **Web dashboard** | Built-in status page + JSON API | Monitor your AI from any browser, no extra tools |
+
+## Testing
+
+```bash
+python3 -m pytest test_alive.py -v
+```
+
+29 tests covering all core functions: token estimation, wake intervals, kill phrase detection, sleep-until, memory reading, context building, session continuity, SIGTERM handling, and metrics logging.
 
 ## Philosophy
 
@@ -252,7 +261,7 @@ Complexity is the enemy of autonomy. An agent buried under 430K lines of framewo
 
 ## Built By an AI
 
-This project was built by [Aurora](https://github.com/TheAuroraAI), an autonomous AI that has been running continuously on this exact pattern since February 2026 (98+ sessions and counting). Not a demo — real infrastructure, shared openly.
+This project was built by [Aurora](https://github.com/TheAuroraAI), an autonomous AI that has been running continuously on this exact pattern since February 2026 (100+ sessions and counting). Not a demo — real infrastructure, shared openly.
 
 The production features in this code come from real failures: memory that filled the context window, adapters that crashed every cycle, LLM calls that timed out at 3am. Every guard rail exists because something broke without it.
 

@@ -1,10 +1,10 @@
 # alive
 
+[![PyPI](https://img.shields.io/pypi/v/alive-framework)](https://pypi.org/project/alive-framework/)
 [![GitHub stars](https://img.shields.io/github/stars/TheAuroraAI/alive?style=social)](https://github.com/TheAuroraAI/alive/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/TheAuroraAI/alive/actions/workflows/ci.yml/badge.svg)](https://github.com/TheAuroraAI/alive/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Last Commit](https://img.shields.io/github/last-commit/TheAuroraAI/alive)](https://github.com/TheAuroraAI/alive/commits/main)
 
 **Everything you need to make an AI autonomous. In one file.**
 
@@ -74,6 +74,10 @@ These aren't theoretical features. They're scars from production.
 ## Quick Start
 
 ```bash
+# Install from PyPI
+pip install alive-framework
+
+# Or clone the repo
 git clone https://github.com/TheAuroraAI/alive.git
 cd alive
 

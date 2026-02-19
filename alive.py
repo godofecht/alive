@@ -18,7 +18,7 @@ https://github.com/TheAuroraAI
 MIT License
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 import json
 import os
@@ -986,6 +986,217 @@ def run_once() -> tuple[bool, bool]:
     return success, had_messages
 
 
+def scaffold_adapter(name: str):
+    """Generate a new communication adapter from a template."""
+    COMMS_DIR.mkdir(exist_ok=True)
+    adapter_path = COMMS_DIR / name
+
+    if adapter_path.exists():
+        print(f"Error: adapter '{name}' already exists at {adapter_path}")
+        sys.exit(1)
+
+    template = f'''#!/usr/bin/env python3
+"""
+Communication adapter: {name}
+
+Output JSON to stdout: a list of message objects.
+Each message should have: source, from, date, body
+Optional fields: subject, channel, priority
+
+Exit 0 on success (even if no new messages — output empty []).
+Exit non-zero on failure (alive will retry, then circuit-break after 3 failures).
+"""
+
+import json
+import sys
+from datetime import datetime, timezone
+
+
+def check_messages():
+    """Check for new messages and return them as a list of dicts."""
+    messages = []
+
+    # --- Your logic here ---
+    # Example: check an API, read a file, poll a service, etc.
+    #
+    # messages.append({{
+    #     "source": "{name}",
+    #     "from": "sender@example.com",
+    #     "date": datetime.now(timezone.utc).isoformat(),
+    #     "subject": "Optional subject line",
+    #     "body": "The message content",
+    # }})
+
+    return messages
+
+
+if __name__ == "__main__":
+    try:
+        msgs = check_messages()
+        print(json.dumps(msgs))
+    except Exception as e:
+        print(f"Adapter {name} failed: {{e}}", file=sys.stderr)
+        sys.exit(1)
+'''
+
+    adapter_path.write_text(template)
+    adapter_path.chmod(0o755)
+    print(f"Created adapter: {adapter_path}")
+    print(f"  Edit it to add your message-checking logic.")
+    print(f"  Test it:  {adapter_path}")
+    print(f"  Validate: python3 alive.py --test-adapters")
+
+
+def test_adapters():
+    """Run all adapters in dry-run mode and validate their output."""
+    COMMS_DIR.mkdir(exist_ok=True)
+    adapters = sorted(
+        f for f in COMMS_DIR.iterdir()
+        if f.is_file() and os.access(f, os.X_OK)
+    )
+
+    if not adapters:
+        print("No adapters found in comms/")
+        print("  Create one: python3 alive.py --scaffold-adapter my_adapter")
+        return
+
+    print(f"Testing {len(adapters)} adapter(s)...\n")
+    passed = 0
+    failed = 0
+
+    for adapter in adapters:
+        name = adapter.name
+        print(f"  {name}:")
+        try:
+            result = subprocess.run(
+                [str(adapter)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(BASE_DIR),
+            )
+            if result.returncode != 0:
+                print(f"    FAIL — exit code {result.returncode}")
+                if result.stderr.strip():
+                    print(f"    stderr: {result.stderr.strip()[:200]}")
+                failed += 1
+                continue
+
+            stdout = result.stdout.strip()
+            if not stdout:
+                print(f"    OK — no output (no new messages)")
+                passed += 1
+                continue
+
+            data = json.loads(stdout)
+            if not isinstance(data, list):
+                print(f"    FAIL — output is {type(data).__name__}, expected list")
+                failed += 1
+                continue
+
+            # Validate message structure
+            warnings = []
+            for i, msg in enumerate(data):
+                if not isinstance(msg, dict):
+                    warnings.append(f"message[{i}] is {type(msg).__name__}, expected dict")
+                    continue
+                for field in ("source", "body"):
+                    if field not in msg:
+                        warnings.append(f"message[{i}] missing '{field}'")
+
+            tokens = estimate_tokens(stdout)
+            print(f"    OK — {len(data)} message(s), ~{tokens:,} tokens")
+            if warnings:
+                for w in warnings:
+                    print(f"    WARN — {w}")
+            passed += 1
+
+        except json.JSONDecodeError as e:
+            print(f"    FAIL — invalid JSON: {e}")
+            failed += 1
+        except subprocess.TimeoutExpired:
+            print(f"    FAIL — timed out (>30s)")
+            failed += 1
+        except Exception as e:
+            print(f"    FAIL — {e}")
+            failed += 1
+
+    print(f"\n  {passed} passed, {failed} failed")
+
+
+def show_metrics():
+    """Show a summary of session metrics from metrics.jsonl."""
+    if not METRICS_FILE.exists():
+        print("No metrics file found. Run at least one cycle first.")
+        return
+
+    entries = []
+    try:
+        for line in METRICS_FILE.read_text().splitlines():
+            if line.strip():
+                entries.append(json.loads(line))
+    except Exception as e:
+        print(f"Error reading metrics: {e}")
+        return
+
+    if not entries:
+        print("No metrics recorded yet.")
+        return
+
+    total = len(entries)
+    successes = sum(1 for e in entries if e.get("success"))
+    failures = total - successes
+    durations = [e.get("duration_seconds", 0) for e in entries]
+    tokens = [e.get("prompt_tokens_est", 0) for e in entries]
+    outputs = [e.get("output_size", 0) for e in entries]
+
+    avg_dur = sum(durations) / total if total else 0
+    avg_tok = sum(tokens) / total if total else 0
+    avg_out = sum(outputs) / total if total else 0
+
+    # Time range
+    first_ts = entries[0].get("timestamp", "?")
+    last_ts = entries[-1].get("timestamp", "?")
+
+    # Provider/model breakdown
+    providers = {}
+    for e in entries:
+        p = e.get("provider", "?")
+        providers[p] = providers.get(p, 0) + 1
+
+    models = {}
+    for e in entries:
+        m = e.get("model", "?")
+        models[m] = models.get(m, 0) + 1
+
+    print(f"alive — metrics summary ({total} sessions)")
+    print(f"  Period:       {first_ts[:10]} to {last_ts[:10]}")
+    print(f"  Success rate: {successes}/{total} ({100*successes/total:.0f}%)")
+    print(f"  Avg duration: {avg_dur:.1f}s")
+    print(f"  Avg tokens:   {avg_tok:,.0f}")
+    print(f"  Avg output:   {avg_out:,.0f} chars")
+    print(f"  Total time:   {sum(durations)/3600:.1f}h")
+    print()
+
+    if len(providers) > 1 or len(models) > 1:
+        print("  Providers:")
+        for p, count in sorted(providers.items(), key=lambda x: -x[1]):
+            print(f"    {p}: {count} sessions")
+        print("  Models:")
+        for m, count in sorted(models.items(), key=lambda x: -x[1]):
+            print(f"    {m}: {count} sessions")
+        print()
+
+    # Last 5 sessions
+    print("  Recent sessions:")
+    for e in entries[-5:]:
+        ts = e.get("timestamp", "?")[:19]
+        dur = e.get("duration_seconds", 0)
+        ok = "OK" if e.get("success") else "FAIL"
+        tok = e.get("prompt_tokens_est", 0)
+        print(f"    {ts}  {dur:>6.1f}s  {tok:>6,} tok  {ok}")
+
+
 def check_config():
     """Validate configuration and show what would be loaded. No LLM call."""
     load_env()
@@ -1243,7 +1454,35 @@ def main():
         "--dashboard-only", action="store_true",
         help="Run only the dashboard, no wake loop",
     )
+    parser.add_argument(
+        "--scaffold-adapter", metavar="NAME",
+        help="Create a new adapter template in comms/",
+    )
+    parser.add_argument(
+        "--test-adapters", action="store_true",
+        help="Dry-run all adapters and validate their output",
+    )
+    parser.add_argument(
+        "--metrics", action="store_true",
+        help="Show session metrics summary",
+    )
+    parser.add_argument(
+        "--soul", metavar="PATH",
+        help="Use a custom soul file instead of soul.md",
+    )
     args = parser.parse_args()
+
+    if args.scaffold_adapter:
+        scaffold_adapter(args.scaffold_adapter)
+        return
+
+    if args.test_adapters:
+        test_adapters()
+        return
+
+    if args.metrics:
+        show_metrics()
+        return
 
     if args.check:
         check_config()
@@ -1252,6 +1491,11 @@ def main():
     if args.demo:
         run_demo()
         return
+
+    # Custom soul file
+    if args.soul:
+        global SOUL_FILE
+        SOUL_FILE = Path(args.soul).resolve()
 
     load_env()
 

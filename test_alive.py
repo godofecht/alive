@@ -312,3 +312,120 @@ def test_record_metrics():
             assert data["prompt_tokens_est"] == 1000
     finally:
         path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0 — Scaffold adapter
+# ---------------------------------------------------------------------------
+
+
+def test_scaffold_adapter_creates_file():
+    with tempfile.TemporaryDirectory() as d:
+        comms_dir = Path(d) / "comms"
+        with patch.object(alive, 'COMMS_DIR', comms_dir):
+            alive.scaffold_adapter("test_adapter")
+            adapter_path = comms_dir / "test_adapter"
+            assert adapter_path.exists()
+            assert os.access(adapter_path, os.X_OK)
+            content = adapter_path.read_text()
+            assert "test_adapter" in content
+            assert "json.dumps" in content
+
+
+def test_scaffold_adapter_refuses_duplicate():
+    with tempfile.TemporaryDirectory() as d:
+        comms_dir = Path(d) / "comms"
+        comms_dir.mkdir()
+        (comms_dir / "existing").write_text("already here")
+        with patch.object(alive, 'COMMS_DIR', comms_dir):
+            with pytest.raises(SystemExit):
+                alive.scaffold_adapter("existing")
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0 — Test adapters
+# ---------------------------------------------------------------------------
+
+
+def test_test_adapters_with_valid_adapter(capsys):
+    with tempfile.TemporaryDirectory() as d:
+        comms_dir = Path(d) / "comms"
+        comms_dir.mkdir()
+
+        # Create a valid adapter that outputs JSON
+        adapter = comms_dir / "good_adapter"
+        adapter.write_text('#!/bin/sh\necho \'[{"source": "test", "body": "hello"}]\'')
+        adapter.chmod(0o755)
+
+        with patch.object(alive, 'COMMS_DIR', comms_dir), \
+             patch.object(alive, 'BASE_DIR', Path(d)):
+            alive.test_adapters()
+            out = capsys.readouterr().out
+            assert "1 passed" in out
+            assert "0 failed" in out
+
+
+def test_test_adapters_with_bad_adapter(capsys):
+    with tempfile.TemporaryDirectory() as d:
+        comms_dir = Path(d) / "comms"
+        comms_dir.mkdir()
+
+        # Create an adapter that outputs invalid JSON
+        adapter = comms_dir / "bad_adapter"
+        adapter.write_text('#!/bin/sh\necho "not json"')
+        adapter.chmod(0o755)
+
+        with patch.object(alive, 'COMMS_DIR', comms_dir), \
+             patch.object(alive, 'BASE_DIR', Path(d)):
+            alive.test_adapters()
+            out = capsys.readouterr().out
+            assert "0 passed" in out
+            assert "1 failed" in out
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0 — Show metrics
+# ---------------------------------------------------------------------------
+
+
+def test_show_metrics_empty(capsys):
+    with patch.object(alive, 'METRICS_FILE', Path("/nonexistent")):
+        alive.show_metrics()
+        out = capsys.readouterr().out
+        assert "No metrics" in out
+
+
+def test_show_metrics_with_data(capsys):
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
+        path = Path(f.name)
+    try:
+        entries = [
+            {"timestamp": "2026-02-19T10:00:00", "model": "test-model",
+             "provider": "test", "duration_seconds": 30.0,
+             "prompt_tokens_est": 5000, "output_size": 2000, "success": True},
+            {"timestamp": "2026-02-19T11:00:00", "model": "test-model",
+             "provider": "test", "duration_seconds": 45.0,
+             "prompt_tokens_est": 8000, "output_size": 3000, "success": True},
+            {"timestamp": "2026-02-19T12:00:00", "model": "test-model",
+             "provider": "test", "duration_seconds": 20.0,
+             "prompt_tokens_est": 3000, "output_size": 1000, "success": False},
+        ]
+        path.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+
+        with patch.object(alive, 'METRICS_FILE', path):
+            alive.show_metrics()
+            out = capsys.readouterr().out
+            assert "3 sessions" in out
+            assert "2/3" in out  # 2 of 3 succeeded
+            assert "Recent sessions" in out
+    finally:
+        path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0 — Version
+# ---------------------------------------------------------------------------
+
+
+def test_version():
+    assert alive.__version__ == "1.1.0"
